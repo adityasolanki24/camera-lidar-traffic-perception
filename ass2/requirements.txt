@@ -1,0 +1,9 @@
+# MTRX4701 ass2 — cone / LiDAR / sign pipeline + classifier
+# Open3D: use Python 3.11 or 3.12 on Windows (no wheels for 3.13 yet).
+numpy>=1.22
+opencv-python>=4.8
+matplotlib>=3.7
+open3d>=0.18
+Pillow>=9.5
+torch>=2.1
+torchvision>=0.16

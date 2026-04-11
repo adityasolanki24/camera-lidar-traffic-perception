@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 
 # File imports
+from classification.model import TrafficSignClassifier
 from detection.detect_cone import detect_cone
 from detection.detect_distance import LidarInterface
 from detection.extract_sign import extract_signs_from_detections
@@ -32,6 +33,8 @@ def main():
 
     # Detect cones in all images
     cone_detections_by_image = detect_cone(IMAGE_FOLDER)
+
+    classifier = TrafficSignClassifier()
 
     # Create folder for output images
     LIDAR_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -74,6 +77,8 @@ def main():
         
         # Merge the results 
         cone_data = merge_cone_results(cone_stats, sign_results)
+
+        classifier.classify_cone_data(cone_data)
         
         # Print the results for this image
         print_cone_stats(
@@ -81,6 +86,7 @@ def main():
             cone_detections,
             cone_stats
         )
+        print_sign_classifications(cone_data)
 
         # Save debug image showing which projected points fall inside each contour
         lidar_interface.save_lidar_distance_image(
@@ -88,9 +94,6 @@ def main():
             image_bgr,
             cone_stats
         )
-
-        # Classify sign 
-        
 
         # Output final result
         
@@ -168,6 +171,21 @@ def merge_cone_results(
         merged_results.append(merged_result)
 
     return merged_results
+
+
+def print_sign_classifications(cone_data: list[dict]) -> None:
+    for row in cone_data:
+        cone_id = row.get("cone_id")
+        name = row.get("predicted_class_name")
+        conf = row.get("classification_confidence")
+        if name is None:
+            print(f"  Cone {cone_id}: sign — no crop / not classified")
+        else:
+            print(
+                f"  Cone {cone_id}: sign — {name} "
+                f"(confidence {conf:.3f})"
+            )
+
 
 if __name__ == "__main__":
     main()
