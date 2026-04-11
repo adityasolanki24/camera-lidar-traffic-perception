@@ -13,6 +13,24 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# --- extract_blue_sign_region ----------------------------------------------
+# Create a blue mask to isolate the arrow symbol region inside a cone crop
+def extract_blue_sign_region(cylinder_crop: np.ndarray) -> np.ndarray:
+    if cylinder_crop.size == 0 or cylinder_crop.shape[0] < 2 or cylinder_crop.shape[1] < 2:
+        return np.zeros((1, 1), dtype=np.uint8)
+
+    hsv = cv2.cvtColor(cylinder_crop, cv2.COLOR_BGR2HSV)
+
+    lower_blue = np.array([90, 70, 40], dtype=np.uint8)
+    upper_blue = np.array([140, 255, 255], dtype=np.uint8)
+
+    blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+    blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+    return blue_mask
+
+
 # --- extract_sign_region ---------------------------------------------------
 # Create a black/white mask to isolate the likely sign region inside a cone crop
 def extract_sign_region(cylinder_crop: np.ndarray) -> np.ndarray:
@@ -39,6 +57,27 @@ def extract_sign_region(cylinder_crop: np.ndarray) -> np.ndarray:
 
     # Combine black and white masks into one binary mask
     return cv2.bitwise_or(white_mask, black_mask)
+
+
+# --- find_blue_sign_candidates ---------------------------------------------
+# Find blue arrow/circle regions that likely belong to a traffic sign
+def find_blue_sign_candidates(
+    mask: np.ndarray, min_area: int = 80
+) -> list[tuple[int, int, int, int]]:
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    sign_candidates: list[tuple[int, int, int, int]] = []
+
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w <= 0 or h <= 0:
+            continue
+
+        aspect_ratio = w / float(h)
+        if 0.45 < aspect_ratio < 1.8 and w * h >= min_area:
+            sign_candidates.append((x, y, w, h))
+
+    return sign_candidates
 
 
 # --- find_square_sign_candidates -------------------------------------------
@@ -126,13 +165,14 @@ def pick_largest_bbox(
 # Extract the most likely sign crop from one cone crop
 def extract_sign_from_cylinder(
     cylinder_crop: np.ndarray,
-    min_area: int = 500,
+    min_area: int = 250,
 ) -> tuple[np.ndarray | None, str, np.ndarray | None, tuple[int, int, int, int] | None]:
     """
     Returns:
     (sign_crop_bgr, method_label, debug_mask_or_none, bbox_in_crop)
 
     method_label:
+    - 'blue'  -> sign found using blue sign-region detection
     - 'hsv'   -> sign found using black/white HSV masking
     - 'canny' -> sign found using Canny fallback
     - 'none'  -> no valid sign found
@@ -145,21 +185,48 @@ def extract_sign_from_cylinder(
     # Get crop size
     h, w = cylinder_crop.shape[:2]
 
-    # Only search the middle vertical band where the sign is expected
-    roi = cylinder_crop[int(0.3 * h):int(0.8 * h), :]
+    # Adaptive thresholds help keep small distant signs while rejecting tiny noise.
+    min_area = max(min_area, int(0.008 * h * w))
+    min_final_area = max(350, int(0.015 * h * w))
 
-    # Build black/white mask in the ROI
-    bw_mask = extract_sign_region(roi)
+    # First, look for the blue symbol region then expand to the square sign.
+    blue_roi_y0 = int(0.08 * h)
+    blue_roi_y1 = int(0.86 * h)
+    blue_roi = cylinder_crop[blue_roi_y0:blue_roi_y1, :]
+    blue_mask = extract_blue_sign_region(blue_roi)
+    blue_candidates = find_blue_sign_candidates(blue_mask, min_area=max(80, min_area))
 
-    # Find square-like sign candidates using the HSV mask
-    candidates = find_square_sign_candidates(bw_mask, min_area=min_area)
-    method = "hsv"
+    bw_mask = None
+    candidates: list[tuple[int, int, int, int]] = []
+    method = "none"
+    use_roi_offset = False
+    roi_y0 = 0
 
-    # If HSV fails, try Canny edge detection on the full cone crop
-    if not candidates:
-        candidates = find_square_sign_candidates_canny(cylinder_crop, min_area=min_area)
-        method = "canny"
-        bw_mask = None
+    if blue_candidates:
+        bx, by, bw, bh = pick_largest_bbox(blue_candidates)
+        center_x = bx + bw / 2.0
+        center_y = by + bh / 2.0 + blue_roi_y0
+        side = int(round(max(bw, bh) * 1.55))
+        sx = int(round(center_x - side / 2.0))
+        sy = int(round(center_y - side / 2.0))
+        candidates = [(sx, sy, side, side)]
+        method = "blue"
+    else:
+        #  HSV search as the main fallback for clean square detections
+        roi_y0 = int(0.3 * h)
+        roi_y1 = int(0.8 * h)
+        roi = cylinder_crop[roi_y0:roi_y1, :]
+        bw_mask = extract_sign_region(roi)
+        candidates = find_square_sign_candidates(bw_mask, min_area=min_area)
+        method = "hsv"
+        use_roi_offset = True
+
+        # If HSV fails try Canny edge detection on the full cone crop
+        if not candidates:
+            candidates = find_square_sign_candidates_canny(cylinder_crop, min_area=min_area)
+            method = "canny"
+            bw_mask = None
+            use_roi_offset = False
 
     # Choose the largest sign candidate
     best = pick_largest_bbox(candidates)
@@ -171,17 +238,19 @@ def extract_sign_from_cylinder(
     # Unpack candidate box
     sx, sy, sw, sh = best
 
-    # Shift y back up because the ROI started partway down the cone crop
-    sy = sy + int(0.3 * h)
+    # Shift y back up only when the candidate came from the HSV ROI
+    if use_roi_offset:
+        sy = sy + roi_y0
 
-    # ==== Add padding around the detected sign box =======================================
-    pad_x = int(0.12 * sw)
-    pad_y = int(0.12 * sh)
+    # Blue detections are already expanded to the surrounding square sign
+    if method != "blue":
+        pad_x = int(0.12 * sw)
+        pad_y = int(0.12 * sh)
 
-    sx = sx - pad_x
-    sy = sy - pad_y
-    sw = sw + 2 * pad_x
-    sh = sh + 2 * pad_y
+        sx = sx - pad_x
+        sy = sy - pad_y
+        sw = sw + 2 * pad_x
+        sh = sh + 2 * pad_y
 
     # Clamp sign box to stay inside the cone crop
     ch, cw = cylinder_crop.shape[:2]
@@ -195,7 +264,7 @@ def extract_sign_from_cylinder(
         return None, "none", bw_mask, None
 
     # Reject very small noisy detections
-    if sw * sh < 1500:
+    if sw * sh < min_final_area:
         return None, "none", bw_mask, None
 
     # Crop the final sign region

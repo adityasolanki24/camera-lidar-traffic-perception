@@ -22,6 +22,14 @@ SIGN_OUTPUT_FOLDER = Path("extracted_sign_outputs")
 # Variables
 LIDAR_FILTER_THRESHOLD = 0.15
 
+# ========================== OUTPUT HELPERS ================================================
+def clear_sign_output_folder(output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in output_dir.iterdir():
+        if path.is_file():
+            path.unlink()
+
 # ============================= MAIN ==========================================================
 def main():
     
@@ -38,7 +46,7 @@ def main():
 
     # Create folder for output images
     LIDAR_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
-    SIGN_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+    clear_sign_output_folder(SIGN_OUTPUT_FOLDER)
 
     # Loop through the images and test the matching LiDAR loading 
     for image_filename, cone_detections in cone_detections_by_image.items():
