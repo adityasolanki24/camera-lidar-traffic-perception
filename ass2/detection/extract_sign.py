@@ -269,8 +269,67 @@ def extract_sign_from_cylinder(
 
     # Crop the final sign region
     sign_crop = cylinder_crop[sy: sy + sh, sx: sx + sw]
+    sign_crop = tighten_sign_crop(sign_crop, method)
 
     return sign_crop, method, bw_mask, (sx, sy, sw, sh)
+
+
+# --- tighten_sign_crop -----------------------------------------------------
+# Trim oversized blue-based crops so the classifier sees mostly the sign.
+def tighten_sign_crop(sign_crop: np.ndarray | None, method: str) -> np.ndarray | None:
+    if sign_crop is None or sign_crop.size == 0 or method != "blue":
+        return sign_crop
+
+    # Keep tiny distant signs as-is; only tighten obviously oversized blue crops.
+    if max(sign_crop.shape[:2]) < 90:
+        return sign_crop
+
+    hsv = cv2.cvtColor(sign_crop, cv2.COLOR_BGR2HSV)
+    strict_blue_mask = cv2.inRange(
+        hsv,
+        np.array([100, 120, 40], dtype=np.uint8),
+        np.array([132, 255, 255], dtype=np.uint8),
+    )
+    strict_blue_mask = cv2.morphologyEx(
+        strict_blue_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)
+    )
+    strict_blue_mask = cv2.morphologyEx(
+        strict_blue_mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)
+    )
+
+    contours, _ = cv2.findContours(
+        strict_blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    if not contours:
+        return sign_crop
+
+    best_contour = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(best_contour)
+    if w <= 0 or h <= 0:
+        return sign_crop
+
+    # If the strict-blue refinement collapses to a tiny fragment, keep the
+    # original blue crop instead of over-trimming it.
+    if (w * h) < 0.02 * (sign_crop.shape[0] * sign_crop.shape[1]):
+        return sign_crop
+
+    side = int(round(max(w, h) * (1.8 if max(w, h) < 20 else 1.45)))
+    center_x = x + w / 2.0
+    center_y = y + h / 2.0
+
+    crop_x0 = max(0, int(round(center_x - side / 2.0)))
+    crop_y0 = max(0, int(round(center_y - side / 2.0)))
+    crop_x1 = min(sign_crop.shape[1], crop_x0 + side)
+    crop_y1 = min(sign_crop.shape[0], crop_y0 + side)
+
+    if crop_x1 <= crop_x0 or crop_y1 <= crop_y0:
+        return sign_crop
+
+    tightened_crop = sign_crop[crop_y0:crop_y1, crop_x0:crop_x1]
+    if tightened_crop.size == 0:
+        return sign_crop
+
+    return tightened_crop
 
 
 # --- safe_crop -------------------------------------------------------------
