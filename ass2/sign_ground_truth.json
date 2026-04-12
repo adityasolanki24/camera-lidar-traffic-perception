@@ -1,0 +1,23 @@
+{
+  "tc10_cone1_blue.png": "Turn right",
+  "tc10_cone2_blue.png": "Turn left",
+  "tc11_cone1_blue.png": "Turn left",
+  "tc12_cone2_blue.png": "Turn left",
+  "tc1_cone1_blue.png": "Turn left",
+  "tc1_cone2_blue.png": "Turn right",
+  "tc1_cone3_blue.png": "Turn left",
+  "tc2_cone1_blue.png": "",
+  "tc2_cone2_blue.png": "Turn right",
+  "tc2_cone3_blue.png": "Turn left",
+  "tc3_cone1_blue.png": "Turn left",
+  "tc4_cone1_blue.png": "Turn right",
+  "tc5_cone1_blue.png": "Turn right",
+  "tc5_cone2_blue.png": "Turn left",
+  "tc6_cone1_blue.png": "Turn left",
+  "tc6_cone2_blue.png": "Turn left",
+  "tc7_cone1_blue.png": "Turn right",
+  "tc8_cone1_blue.png": "Turn left",
+  "tc8_cone2_blue.png": "Turn right",
+  "tc9_cone1_blue.png": "Turn left",
+  "tc9_cone2_hsv.png": "Turn left"
+}

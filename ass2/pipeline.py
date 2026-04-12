@@ -1,6 +1,7 @@
 # ========================= PIPELINE ==========================================================
 
 # Library imports 
+import json
 from pathlib import Path
 import cv2
 
@@ -21,6 +22,15 @@ SIGN_OUTPUT_FOLDER = Path("extracted_sign_outputs")
 
 # Variables
 LIDAR_FILTER_THRESHOLD = 0.15
+GROUND_TRUTH_PATH = Path("sign_ground_truth.json")
+CLASS_NAMES = [
+    "Stop",
+    "Turn right",
+    "Turn left",
+    "Ahead only",
+    "Roundabout mandatory",
+]
+CLASS_NAME_LOOKUP = {name.casefold(): name for name in CLASS_NAMES}
 
 # ========================== OUTPUT HELPERS ================================================
 def clear_sign_output_folder(output_dir: Path) -> None:
@@ -29,6 +39,95 @@ def clear_sign_output_folder(output_dir: Path) -> None:
     for path in output_dir.iterdir():
         if path.is_file():
             path.unlink()
+
+
+def load_ground_truth(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Ground truth file must contain a JSON object: {path}")
+
+    ground_truth: dict[str, str] = {}
+    for key, value in data.items():
+        if isinstance(key, str) and isinstance(value, str):
+            ground_truth[key] = value
+
+    return ground_truth
+
+
+def save_ground_truth(path: Path, ground_truth: dict[str, str]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(ground_truth, handle, indent=2, sort_keys=True)
+
+
+def sync_ground_truth_with_outputs(
+    output_dir: Path,
+    ground_truth_path: Path,
+) -> dict[str, str]:
+    existing_ground_truth = load_ground_truth(ground_truth_path)
+
+    synced_ground_truth: dict[str, str] = {}
+    for output_path in sorted(output_dir.glob("*.png")):
+        synced_ground_truth[output_path.name] = existing_ground_truth.get(output_path.name, "")
+
+    save_ground_truth(ground_truth_path, synced_ground_truth)
+    return synced_ground_truth
+
+
+def normalise_class_name(label: str | None) -> str | None:
+    if label is None:
+        return None
+
+    return CLASS_NAME_LOOKUP.get(label.strip().casefold())
+
+
+def print_ground_truth_accuracy(cone_data: list[dict], ground_truth: dict[str, str]) -> None:
+    extracted_count = 0
+    labelled_count = 0
+    correct_count = 0
+    invalid_labels: list[tuple[str, str]] = []
+
+    for row in cone_data:
+        saved_path = row.get("saved_sign_crop_path")
+        if not saved_path:
+            continue
+
+        extracted_count += 1
+        ground_truth_key = Path(saved_path).name
+        raw_label = ground_truth.get(ground_truth_key, "")
+        true_label = normalise_class_name(raw_label)
+
+        if raw_label and true_label is None:
+            invalid_labels.append((ground_truth_key, raw_label))
+            continue
+
+        if true_label is None:
+            continue
+
+        labelled_count += 1
+        predicted_label = normalise_class_name(row.get("predicted_class_name"))
+        if predicted_label == true_label:
+            correct_count += 1
+
+    print("\nGround-truth sign classification accuracy:")
+    print(f"  Extracted sign crops: {extracted_count}")
+    print(f"  Labelled ground-truth entries used: {labelled_count}")
+
+    if labelled_count == 0:
+        print(f"  Fill in {GROUND_TRUTH_PATH} and rerun the pipeline to compute accuracy.")
+    else:
+        accuracy = 100.0 * correct_count / labelled_count
+        print(f"  Correct predictions: {correct_count}/{labelled_count}")
+        print(f"  Accuracy: {accuracy:.2f}%")
+
+    if invalid_labels:
+        print("  Ignored entries with invalid labels:")
+        for filename, label in invalid_labels:
+            print(f"    {filename}: {label}")
 
 # ============================= MAIN ==========================================================
 def main():
@@ -47,6 +146,7 @@ def main():
     # Create folder for output images
     LIDAR_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
     clear_sign_output_folder(SIGN_OUTPUT_FOLDER)
+    all_cone_data: list[dict] = []
 
     # Loop through the images and test the matching LiDAR loading 
     for image_filename, cone_detections in cone_detections_by_image.items():
@@ -95,6 +195,7 @@ def main():
             cone_stats
         )
         print_sign_classifications(cone_data)
+        all_cone_data.extend(cone_data)
 
         # Save debug image showing which projected points fall inside each contour
         lidar_interface.save_lidar_distance_image(
@@ -104,8 +205,11 @@ def main():
         )
 
         # Output final result
-        
-        
+
+    ground_truth = sync_ground_truth_with_outputs(SIGN_OUTPUT_FOLDER, GROUND_TRUTH_PATH)
+    print(f"\nGround-truth template updated: {GROUND_TRUTH_PATH.resolve()}")
+    print_ground_truth_accuracy(all_cone_data, ground_truth)
+
 # ========================== HELPER FUNCTIONS ============================================= 
 # --- load_image_and_lidar -------------------------------------------------
 # Load one image and its matching LiDAR cloud
