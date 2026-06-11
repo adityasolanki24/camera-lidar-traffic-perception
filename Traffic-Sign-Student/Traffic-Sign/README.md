@@ -26,7 +26,7 @@ conda activate traffic
 
 ## 2. Install PyTorch
 
-PyTorch is the deep learning framework used in this project. The CPU version is sufficient for this assignment; the GPU version will speed up training if you have an NVIDIA GPU.
+PyTorch is the deep learning framework used in this project. The CPU version is sufficient for local development; the GPU version will speed up training if you have an NVIDIA GPU.
 
 ### CPU Version (recommended for beginners)
 

@@ -1,1 +1,8 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+Traffic-Sign-Student/Traffic-Sign/checkpoint/
 Traffic-Sign-Student/*.p
+Traffic-Sign-Student/Traffic-Sign/*.p

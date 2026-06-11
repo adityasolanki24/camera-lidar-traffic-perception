@@ -1,4 +1,4 @@
-# MTRX4701 ass2 — cone / LiDAR / sign pipeline + classifier
+# Camera–LiDAR traffic perception pipeline + ResNet18 sign classifier
 # Open3D: use Python 3.11 or 3.12 on Windows (no wheels for 3.13 yet).
 numpy>=1.22
 opencv-python>=4.8
